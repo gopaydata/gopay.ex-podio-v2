@@ -4,6 +4,7 @@ import json
 import pandas as pd
 import requests
 from keboola.component.base import ComponentBase
+import keboola.component.exceptions
 
 # Configuration variables
 KEY_CLIENT_ID = '#client_id'
@@ -241,8 +242,8 @@ class Component(ComponentBase):
             total_fetched += len(batch_items)
 
     def run(self):
-        pozadavky = self.create_out_table_definition('items.csv')
-        out_table_path = pozadavky.full_path
+        # pozadavky = self.create_out_table_definition('items.csv')
+
         app_id = self.configuration.parameters.get(KEY_APP_ID)
         self.get_all_podio_items(app_id, max_items=10000)
 
