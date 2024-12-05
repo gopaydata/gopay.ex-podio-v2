@@ -380,16 +380,15 @@ class Component(ComponentBase):
         start_date = datetime.now() - timedelta(days=5)
         end_date = datetime.now()
 
-        filter = items_last_5_days[
+        filter_items = items_last_5_days[
             (items_last_5_days['last_event_on'] >= start_date) &
             (items_last_5_days['last_event_on'] <= end_date)
             ]
 
-        item_count = filter['item_id'].count()
+        item_count = filter_items['item_id'].count()
         logging.info(f"Loading item events for {item_count} items.")
 
-        filter_sorted = filter.sort_values(by="last_event_on", ascending=True)
-        # print(filtr_sorted['last_event_on'])
+        filter_sorted = filter_items.sort_values(by="last_event_on", ascending=True)
 
         all_activities = []
 
@@ -400,7 +399,7 @@ class Component(ComponentBase):
                 activities = self.get_item_revisions_and_comments(item_dict, access_token=self.access_token)
                 if activities:
                     all_activities.extend(activities)
-                elif activities == None:
+                elif activities is None:
                     print("Limit reached - breaking...")
                     break
             except Exception as e:
