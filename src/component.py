@@ -74,7 +74,6 @@ def transform_podio_items(items):
             elif field_label == 'Schválení':
                 item_data['schvaleni_text'] = field_values[0]['value']['text'] if field_values else None
             elif field_label == 'Prostředí':
-                # Prostředí může být vícenásobné, takže extrahujeme všechna prostředí jako text
                 item_data['prostredi_text'] = ', '.join([env['value']['text'] for env in field_values])
             elif field_label == 'Signifikantní změna':
                 item_data['signifikantni_zmena'] = field_values[0]['value']['text'] if field_values else None
@@ -106,9 +105,6 @@ def transform_podio_items(items):
 
 
 def create_manifest(file_path, delimiter='\t', enclosure='"'):
-    """
-    Vytvoří manifest pro CSV soubor.
-    """
     manifest = {
         "delimiter": delimiter,
         "enclosure": enclosure
@@ -117,6 +113,38 @@ def create_manifest(file_path, delimiter='\t', enclosure='"'):
     with open(manifest_path, 'w', encoding='utf-8') as manifest_file:
         json.dump(manifest, manifest_file)
     logging.info(f"Manifest file created at {manifest_path}.")
+
+
+def get_revision_differences(item_id, revision_from, revision_to, headers):
+    diff_url = f'https://api.podio.com/item/{item_id}/revision/{revision_from}/{revision_to}'
+    diff_response = requests.get(diff_url, headers=headers)
+    if diff_response.status_code == 200:
+        differences = diff_response.json()
+
+        extracted_diffs = []
+        for diff in differences:
+            if diff.get("type") != "category":
+                continue
+
+            field_id = diff.get("field_id")
+            external_id = diff.get("external_id")
+            label = diff.get("label")
+
+            from_value = [item["value"].get("text", "N/A") for item in
+                          diff.get("from", [{"value": {"text": "N/A"}}])]
+            to_value = [item["value"].get("text", "N/A") for item in diff.get("to", [{"value": {"text": "N/A"}}])]
+
+            extracted_diffs.append({
+                "field_id": field_id,
+                "external_id": external_id,
+                "label": label,
+                "previous_value": ", ".join(from_value),
+                "new_value": ", ".join(to_value)
+            })
+        return extracted_diffs
+    else:
+        logging.error(f"Error retrieving revision differences: {diff_response.text}")
+        return None
 
 
 class Component(ComponentBase):
@@ -189,17 +217,16 @@ class Component(ComponentBase):
             batch_items = self.get_podio_items(app_id, limit=batch_size, offset=offset)
             if not batch_items:
                 logging.info("No more items to fetch. Ending process.")
-                break
 
-            # Filtrování položek z posledních 10 dnů
-            filtr_date = datetime.now() - timedelta(days=10)
-            items_last_10_days = [
+            # Filtrování položek z posledních 30 dnů
+            filtr_date = datetime.now() - timedelta(days=30)
+            items_last_30_days = [
                 item for item in batch_items
                 if datetime.strptime(item['last_event_on'], '%Y-%m-%d %H:%M:%S') >= filtr_date
             ]
 
-            # Transformace položek a přejmenování sloupců
-            df_podio = transform_podio_items(items_last_10_days)
+            # Column rename
+            df_podio = transform_podio_items(items_last_30_days)
             column_rename_map = {
                 'item_id': 'item_id',
                 'external_id': 'external_id',
@@ -231,24 +258,174 @@ class Component(ComponentBase):
 
             df_podio.rename(columns=column_rename_map, inplace=True)
 
-            # Uložení dávky do souboru
+            # Saving to CSV file
             if not df_podio.empty:
                 write_mode = 'a' if total_fetched > 0 else 'w'
                 df_podio.to_csv(out_table_path, sep='\t', index=False, mode=write_mode, header=(write_mode == 'w'))
                 logging.info(f"Saved {len(df_podio)} records to {out_table_path}.")
 
-            # Aktualizace offsetu a celkového počtu načtených položek
             offset += batch_size
             total_fetched += len(batch_items)
 
+    @staticmethod
+    def get_item_revisions_and_comments(item, access_token):
+        item_id = item['item_id']
+        request_number = item.get('request_number', None)
+        headers = {'Authorization': f'Bearer {access_token}'}
+        activities = []
+        date_threshold = datetime.now() - timedelta(days=5)
+
+        # Getting revisions
+        revision_url = f'https://api.podio.com/item/{item_id}/revision'
+        revision_response = requests.get(revision_url, headers=headers)
+        # print(int(revision_response.headers['X-Rate-Limit-Remaining']))
+
+        if int(revision_response.headers['X-Rate-Limit-Remaining']) < 50:
+            current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            logging.warning(f"Rate limit reached at {current_time}.")
+            return None
+
+        if revision_response.status_code == 200:
+            revisions = [
+                rev for rev in revision_response.json()
+                if datetime.strptime(rev['created_on'], '%Y-%m-%d %H:%M:%S') >= date_threshold
+            ]
+
+            # First revision adding (creation)
+            if revisions:
+                creation_revision = revisions[0]
+                activities.append({
+                    'id': item_id,
+                    'item_revision_id': creation_revision.get('item_revision_id'),
+                    'request_number': request_number,
+                    'type': 'creation',
+                    'author': creation_revision.get('created_by', {}).get('name', 'Unknown'),
+                    'date': creation_revision.get('created_on'),
+                    'changed_field': 'initial creation',
+                    'previous_value': None,
+                    'new_value': 'Item created'
+                })
+
+            # Next revisions
+            for i in range(1, len(revisions)):
+                prev_revision = revisions[i - 1]
+                current_revision = revisions[i]
+
+                revision_diff = get_revision_differences(
+                    item_id,
+                    prev_revision['revision'],
+                    current_revision['revision'],
+                    headers
+                )
+                if revision_diff:
+                    for change in revision_diff:
+                        activities.append({
+                            'id': item_id,
+                            'item_revision_id': current_revision.get('item_revision_id'),
+                            'request_number': request_number,
+                            'type': 'update',
+                            'author': current_revision.get('created_by', {}).get('name', 'Unknown'),
+                            'date': current_revision.get('created_on'),
+                            'changed_field': change['label'],
+                            'previous_value': change['previous_value'],
+                            'new_value': change['new_value']
+                        })
+
+        else:
+            logging.error(f"Error retrieving revisions for item {item_id}: {revision_response.text}")
+
+        # Getting comments
+        comment_url = f'https://api.podio.com/comment/item/{item_id}'
+        comment_response = requests.get(comment_url, headers=headers)
+        if comment_response.status_code == 200:
+            comments = [
+                comment for comment in comment_response.json()
+                if datetime.strptime(comment['created_on'], '%Y-%m-%d %H:%M:%S') >= date_threshold
+            ]
+            for comment in comments:
+                activities.append({
+                    'id': item_id,
+                    'item_revision_id': comment.get('comment_id'),
+                    'request_number': request_number,
+                    'type': 'comment',
+                    'author': comment.get('created_by', {}).get('name', 'Unknown'),
+                    'date': comment.get('created_on'),
+                    'changed_field': 'comment',
+                    'new_value': comment.get('value')
+                })
+        else:
+            logging.error(f"Error retrieving comments for item {item_id}: {comment_response.text}")
+
+        return activities
+
     def run(self):
-        # pozadavky = self.create_out_table_definition('items.csv')
+        # Output tables definition
+        pozadavky = self.create_out_table_definition('items.csv')
+        aktivity = self.create_out_table_definition('activities.csv')
+
+        out_table_path = pozadavky.full_path
+        out_table_path2 = aktivity.full_path
 
         app_id = self.configuration.parameters.get(KEY_APP_ID)
         self.get_all_podio_items(app_id, max_items=10000)
 
+        # Data loading
+        items_last_5_days = pd.read_csv(out_table_path, sep='\t')
 
-# Main entry point
+        item_count = items_last_5_days['item_id'].count()
+        logging.info(f"{item_count} items saved.")
+
+        items_last_5_days['last_event_on'] = pd.to_datetime(items_last_5_days['last_event_on'], errors='coerce')
+
+        start_date = datetime.now() - timedelta(days=5)
+        end_date = datetime.now()
+
+        filter = items_last_5_days[
+            (items_last_5_days['last_event_on'] >= start_date) &
+            (items_last_5_days['last_event_on'] <= end_date)
+            ]
+
+        item_count = filter['item_id'].count()
+        logging.info(f"Loading item events for {item_count} items.")
+
+        filter_sorted = filter.sort_values(by="last_event_on", ascending=True)
+        # print(filtr_sorted['last_event_on'])
+
+        all_activities = []
+
+        for i, (_, row) in enumerate(filter_sorted.iterrows()):
+
+            item_dict = row.to_dict()
+            try:
+                activities = self.get_item_revisions_and_comments(item_dict, access_token=self.access_token)
+                if activities:
+                    all_activities.extend(activities)
+                elif activities == None:
+                    print("Limit reached - breaking...")
+                    break
+            except Exception as e:
+                logging.warning(f"Error processing activities for item {row['item_id']}: {e}")
+
+        # Empty CSV for none activities
+        if not all_activities:
+            df_activities = pd.DataFrame(columns=[
+                'id', 'item_revision_id', 'request_number', 'type', 'author', 'date',
+                'changed_field', 'previous_value', 'new_value'
+            ])
+        else:
+            df_activities = pd.DataFrame(all_activities)
+
+        if 'id' in df_activities.columns:
+            df_activities['id'] = df_activities['id'].fillna(0).astype('Int64')
+        if 'item_revision_id' in df_activities.columns:
+            df_activities['item_revision_id'] = df_activities['item_revision_id'].fillna(0).astype('Int64')
+
+        # Activities saving to CSV file
+        df_activities.to_csv(out_table_path2, sep='\t', index=False)
+        logging.info(f"Activities data saved to {out_table_path2}.")
+        create_manifest(out_table_path2)
+
+
 if __name__ == "__main__":
     try:
         comp = Component()
