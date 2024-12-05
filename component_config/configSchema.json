@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "title": "Podio extractor configuration",
+  "required": [
+    "#client_id",
+    "#client_secret",
+    "username",
+    "#password",
+    "app_id"
+  ],
+  "properties": {
+    "app_id": {
+      "type": "string",
+      "title": "Podio APP ID",
+      "propertyOrder": 40
+    },
+    "username": {
+      "type": "string",
+      "title": "Username",
+      "description": "Podio username",
+      "propertyOrder": 20
+    },
+    "#password": {
+      "type": "string",
+      "title": "Password",
+      "description": "Podio password",
+      "propertyOrder": 30
+    },
+    "#client_id": {
+      "type": "string",
+      "title": "Client ID",
+      "propertyOrder": 10
+    },
+    "#client_secret": {
+      "type": "string",
+      "title": "Client Secret",
+      "propertyOrder": 11
+    }
+  }
+}
