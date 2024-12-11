@@ -41,6 +41,7 @@ def transform_podio_items(items):
             'oblast_text': None,
             'priorita_text': None,
             'schvaleni_text': None,
+            'schvaleni_sec_text': None,
             'prostredi_text': None,
             'signifikantni_zmena': None,
             'poznamky_text': None,
@@ -73,6 +74,8 @@ def transform_podio_items(items):
                 item_data['priorita_text'] = field_values[0]['value']['text'] if field_values else None
             elif field_label == 'Schválení':
                 item_data['schvaleni_text'] = field_values[0]['value']['text'] if field_values else None
+            elif field_label == 'Schválení - Security manager':
+                item_data['schvaleni_sec_text'] = field_values[0]['value']['text'] if field_values else None
             elif field_label == 'Prostředí':
                 item_data['prostredi_text'] = ', '.join([env['value']['text'] for env in field_values])
             elif field_label == 'Signifikantní změna':
@@ -243,6 +246,7 @@ class Component(ComponentBase):
                 'oblast_text': 'area',
                 'priorita_text': 'priority',
                 'schvaleni_text': 'approval',
+                'schvaleni_sec_text': 'approval_security',
                 'prostredi_text': 'environment',
                 'signifikantni_zmena': 'significant_change',
                 'poznamky_text': 'notes',
