@@ -50,6 +50,7 @@ def transform_podio_items(items):
             'tasks': None,
             'jira_project_text': None,
             'jira_link': None,
+            'jira_sprint': None,
             'pozadavek_text': None,
             'zadani_text': None,
             'zainteresovane_osoby': None
@@ -88,6 +89,10 @@ def transform_podio_items(items):
                 item_data['zainteresovane_osoby'] = ', '.join([person['value']['name'] for person in field_values])
             elif field_label == 'Jira Link':
                 item_data['jira_link'] = field_values[0]['value'] if field_values else None
+            elif field_label == 'Jira Project':
+                item_data['jira_project_text'] = field_values[0]['value']['text'] if field_values else None
+            elif field_label == 'Jira Sprint':
+                item_data['jira_sprint'] = field_values[0]['value'] if field_values else None
             elif field_label == 'Zadání':
                 item_data['zadani_text'] = field_values[0]['value'] if field_values else None
 
@@ -255,6 +260,7 @@ class Component(ComponentBase):
                 'tasks': 'tasks',
                 'jira_project_text': 'jira_project',
                 'jira_link': 'jira_link',
+                'jira_sprint': 'jira_sprint',
                 'pozadavek_text': 'requirement',
                 'zadani_text': 'assignment',
                 'zainteresovane_osoby': 'interested_persons'
