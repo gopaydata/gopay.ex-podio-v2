@@ -14,3 +14,4 @@ __pycache__/
 # Test file
 /src/component_data.py
 /src/component_test.py
+/src/component_ITEMS_all_history.py
